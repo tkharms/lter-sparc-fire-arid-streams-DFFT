@@ -8,6 +8,7 @@ library(tidyverse)
 library(googledrive)
 library(discharge)
 library(data.table)
+library(lubridate)
 
 ######################
 ### Discharge data ###
@@ -33,19 +34,22 @@ t.sites <- t.sites %>% separate(ignition_date, c("igDate", "junk"), "T") %>%
                        mutate(igDate = as.Date(igDate, format = "%Y-%m-%d"))
 
 t.dat <- dat %>% filter(site_no %in% t.sites$usgs_site)
+t.dat <- t.dat %>% separate(usgs_site, c("trash", "usgs_site"), sep = "-")
 
-###****TKH: filter to 20 y from 4 y post-fire before running DFFT *** ####
+##############################
+### Prep data for analysis ###
+##############################
+## Pare data to 25 y pre-fire
+# Join ignition dates
+t.dat <- full_join(t.dat, t.sites, by = "usgs_site")
 
-############
-### DFFT ###
-############
-## Demo notes:
-# Using full Q record. Might want to trim to 20 or 30 y (counting back from last year of post-fire analysis window).
+# Filter to 25 y before fire
+t.dat <- t.dat %>% mutate(t.diff = Date %--% igDate/years(1)) %>%
+                   filter(t.diff <= 25)
 
-## Prep data for analysis
 # Format for discharge package: Date (YYYY-MM-DD) in column1, CFS (val) in column 2
-t.dat <- t.dat %>% select(site_no, Date, Flow) %>%
-                   setNames(c("site", "date", "cfs"))
+t.dat <- t.dat %>% select(usgs_site, Date, Flow) %>%
+  setNames(c("site", "date", "cfs"))
 
 tdat.lst <- split(t.dat, t.dat$site)
 
@@ -55,8 +59,9 @@ tdat.lst <- lapply(tdat.lst, select, -"site")
 tdat.lst[["09367540"]] <- NULL
 tdat.lst[["09367580"]] <- NULL
 
-## DFFT analysis ##
-###*** Currently all available data used in analysis... should probably filter to 20-30 y before end of analysis period
+#####################
+### DFFT analysis ###
+#####################
 flow.list <- lapply(tdat.lst, asStreamflow)
 seas.list <- lapply(flow.list, fourierAnalysis)
 
@@ -99,27 +104,28 @@ DFFTavg <- function(X.flow, X.seas, SiteName){
 }
 
 met.out <- mapply(x = flow.list, y = seas.list, z = names(seas.list), FUN = function(x, y, z) DFFTavg(x, y, z))
-met.out.df <- data.frame(matrix(unlist(met.out), nrow=length(met.out), byrow=TRUE))
+met.out.df <- met.out[-1,] %>%
+              as_tibble(., rownames = "metric") %>%
+              unnest(-metric) %>%
+              pivot_longer(!metric, names_to = "site", values_to = "value")
 
-
-write.csv(met.out,here("hydro", "DFFT_avg_allyears.csv"), row.names = FALSE)
+write.csv(met.out, here("hydro", "DFFT_avg_25years.csv"), row.names = FALSE)
 
 ## Plot
-met.out <- read.csv(here("hydro", "DFFT_avg_allyears.csv"))
-met.out.df <- met.out %>% data.frame(bind_cols(met.out)) %>%
-                          rownames_to_column(., 'metric') %>%
-                          select(-(contains(".1"))) %>%
-                          pivot_longer(!metric, names_to = "SiteName", values_to = "value")
+metrics.pl <- met.out.df %>% ggplot(aes(x = site, y = value)) +
+                                geom_point() +
+                                facet_wrap(~metric, scales = "free_y") +
+                                theme_bw() +
+                                theme(axis.text.x = element_text(angle = 90, hjust = 1),
+                                      axis.title.x = element_blank(),
+                                      axis.title.y = element_blank())
 
-                          pivot_longer(!religion, names_to = "income", values_to = "count")
-                          
-labs <- 
-  
-metrics.yr <- ggplot(aes(x = ))
+ggsave(metrics.pl, path = here("hydro", "plots"), file = "DFFT_metrics_25y.pdf", width = 10, height = 8, units = "in")
 
 ## Summarize metrics over 4 years pre- and 4 years post-fire
+### ****Goals here- ave metrics pre- and post-fire, then sum of + anomalies post-fire-- filter flow and seas to 4 y pre & 4 y post fire first?
 # Metrics by year
-####****Summarizing by calendar year... difficulty w/ structure of lists from 'discharge'. Switch to years in fire timeline or water years?***####
+####****Summarizing by calendar year... Switch to years in fire timeline or water years?***####
 DFFTyr <- function(X.flow, X.seas, SiteName){
   X.bl <- prepareBaseline(X.flow)
   X.FPExt <- getFPExt(X.bl$resid.sig, X.flow$data$year)
