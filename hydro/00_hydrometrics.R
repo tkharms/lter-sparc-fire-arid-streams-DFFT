@@ -124,9 +124,9 @@ metrics.pl <- met.out.df %>% ggplot(aes(x = site, y = value)) +
 ggsave(metrics.pl, path = here("hydro", "plots"), file = "DFFT_metrics_25y.pdf", width = 10, height = 8, units = "in")
 
 #################################################################
-### Summarize metrics over 4 years pre- and 4 years post-fire ###
+### Summarize metrics over 3 years pre- and 3 years post-fire ###
 #################################################################
-### ****Goals here- ave metrics pre- and post-fire, then sum of + anomalies post-fire-- filter flow and seas to 4 y pre & 4 y post fire first?
+### ****Goals here- ave metrics pre- and post-fire, then sum of + anomalies post-fire-- filter flow and seas to 3 y pre & 3 y post fire first?
 # Metrics by year
 ####****Summarizing by calendar year... Switch to years in fire timeline or water years?***####
 DFFTyr <- function(X.flow, X.seas, SiteName){
@@ -167,8 +167,8 @@ ss.metrics <- DFFTyr(ss.flow, ss.seas, "07103700")
 
 ## filter to pre-fire & filter to post-fire
 # Note change years(x) if revising pre-/post-fire window
-t.sites.pp <- t.sites %>% mutate(before.fire = igDate - years(4)) %>%
-                          mutate(after.fire = igDate + years(4)) %>%
+t.sites.pp <- t.sites %>% mutate(before.fire = igDate - years(3)) %>%
+                          mutate(after.fire = igDate + years(3)) %>%
                           mutate(ybeffire = format(as.Date(before.fire, format = "%Y-%m-%d"), "%Y")) %>%
                           mutate(yaftfire = format(as.Date(after.fire, format = "%Y-%m-%d"), "%Y"))
 
@@ -208,8 +208,27 @@ dates.df <- bind_rows(dates, .id = "usgs_site")
 pos.anom <- left_join(dates.df, pre.sum.df)
 pos.anom <- left_join(pos.anom, post.sum.df)
 
+### Plots ###
+hiflow.pl <- pos.anom %>% pivot_longer(cols = c("bpos", "apos"), names_to = "fire", values_to = "HSAM") %>%
+                          ggplot(aes(x = fire, y = HSAM, group = usgs_site, color = usgs_site)) +
+                            geom_point() +
+                            geom_line(aes(group = usgs_site)) +
+                            scale_x_discrete(limits = c("bpos", "apos"),
+                                             labels = c("3 y pre-fire", "3 y post-fire")) +
+                            ylab("high-flow anomalies") +
+                          theme_bw() +
+                          theme(axis.title.x = element_blank(),
+                                axis.text = element_text(size = 14),
+                                axis.title.y = element_text(size = 14),
+                                legend.title = element_blank(),
+                                legend.text = element_text(size = 14),
+                                plot.title = element_text(hjust = 0.5, size = 14),
+                                panel.grid = element_blank())
+
+ggsave(hiflow.pl, path = here("hydro", "plots"), file = "demoHSAM.pdf", width = 6, height = 4, units = "in")
+
 ###***other possibilities:
 ###*days since fire of largest positive anomaly OR some fraction of cdf of net anomalies?
-###*number days with positive anomalies post-fire OR number days with + anomalies above some threshold (like 2*SD mean of + anomalies)
+###*number days with positive anomalies post-fire
 ###*Average time between positive anomalies above some threshold
 
