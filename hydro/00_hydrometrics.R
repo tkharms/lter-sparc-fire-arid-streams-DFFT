@@ -10,6 +10,7 @@ library(discharge)
 library(data.table)
 library(lubridate)
 library(zoo)
+library(cardidates)
 
 ######################
 ### Discharge data ###
@@ -44,6 +45,9 @@ t.dat <- t.dat %>% separate(usgs_site, c("trash", "usgs_site"), sep = "-")
 # Join ignition dates
 t.dat <- full_join(t.dat, t.sites, by = "usgs_site")
 
+# preserve all years for subsequent analysis
+t.dat.all <- t.dat 
+
 # Filter to 25 y before fire
 t.dat <- t.dat %>% mutate(t.diff = Date %--% igDate/years(1)) %>%
                    filter(t.diff <= 25)
@@ -63,7 +67,7 @@ tdat.lst[["09367580"]] <- NULL
 #####################
 ### DFFT analysis ###
 #####################
-flow.list <- lapply(tdat.lst, asStreamflow)
+flow.list <- lapply(tdat.lst, asStreamflow, max.na = 100)
 seas.list <- lapply(flow.list, fourierAnalysis)
 
 ## DFFT fit plots
@@ -110,6 +114,9 @@ met.out.df <- met.out[-1,] %>%
               unnest(-metric) %>%
               pivot_longer(!metric, names_to = "site", values_to = "value")
 
+## Metrics (up to 25 y pre-fire) to use as covariates:
+# snr: signal-to-noise ratio, metric of repeatability of seasonal signal through time, rms.signal/rms.noise
+# rms.signal: measures seasonal variation. rm.signal = 0 for no seasonal variation
 write.csv(met.out, here("hydro", "DFFT_avg_25years.csv"), row.names = FALSE)
 
 ## Plot
@@ -127,30 +134,31 @@ ggsave(metrics.pl, path = here("hydro", "plots"), file = "DFFT_metrics_25y.pdf",
 ### Summarize metrics over 3 years pre- and 3 years post-fire ###
 #################################################################
 ### ****Goals here- ave metrics pre- and post-fire, then sum of + anomalies post-fire-- filter flow and seas to 3 y pre & 3 y post fire first?
+## !!!Probably not using this!!! ##
 # Metrics by year
 ####****Summarizing by calendar year... Switch to years in fire timeline or water years?***####
-DFFTyr <- function(X.flow, X.seas, SiteName){
-  X.bl <- prepareBaseline(X.flow)
-  X.FPExt <- getFPExt(X.bl$resid.sig, X.flow$data$year)
-  X.HSAF <- getHSAF(X.bl$resid.sig, X.flow$data$year)
-  X.HSAM <- getHSAM(X.bl$resid.sig, X.flow$data$year)%>%
-    select(year, HSAM)
-  X.LSAF <- getLSAF(X.bl$resid.sig, X.flow$data$year)
-  X.LSAM <- getLSAM(X.bl$resid.sig, X.flow$data$year)%>%
-    select(year, LSAM)
-  X.NAA <- getNAA(X.bl$resid.sig, X.flow$data$year)
-  X.HFsigma <- sigmaHighFlows(X.flow) #Use X.HFsigma$sigma.hfb
-  X.LFsigma <- sigmaLowFlows(X.flow) #Use X.LFsigma$sigma.hfb
-  X.Zdays <- X.seas$signal%>% #Average number of zero flow days per year
-    group_by(year)%>%
-    summarize(Zdays = sum(discharge <0.1))
-  X.fftavg <- bind_cols(Site = SiteName, HSAM = X.HSAM$HSAM, LSAM = X.LSAM$LSAM,
-                        HSAF = X.HSAF$HSAF, LSAF = X.LSAF$LSAF, FPExt = X.FPExt$FPExt,
-                        NAA = X.NAA$NAA, HFsigma = X.HFsigma$sigma.hfb, LFsigma = X.LFsigma$sigma.lfb,
-                        X.Zdays)
-}
+#DFFTyr <- function(X.flow, X.seas, SiteName){
+#  X.bl <- prepareBaseline(X.flow)
+#  X.FPExt <- getFPExt(X.bl$resid.sig, X.flow$data$year)
+#  X.HSAF <- getHSAF(X.bl$resid.sig, X.flow$data$year)
+#  X.HSAM <- getHSAM(X.bl$resid.sig, X.flow$data$year)%>%
+#    select(year, HSAM)
+#  X.LSAF <- getLSAF(X.bl$resid.sig, X.flow$data$year)
+#  X.LSAM <- getLSAM(X.bl$resid.sig, X.flow$data$year)%>%
+#    select(year, LSAM)
+#  X.NAA <- getNAA(X.bl$resid.sig, X.flow$data$year)
+#  X.HFsigma <- sigmaHighFlows(X.flow) #Use X.HFsigma$sigma.hfb
+#  X.LFsigma <- sigmaLowFlows(X.flow) #Use X.LFsigma$sigma.hfb
+#  X.Zdays <- X.seas$signal%>% #Average number of zero flow days per year
+#    group_by(year)%>%
+#    summarize(Zdays = sum(discharge <0.1))
+#  X.fftavg <- bind_cols(Site = SiteName, HSAM = X.HSAM$HSAM, LSAM = X.LSAM$LSAM,
+#                        HSAF = X.HSAF$HSAF, LSAF = X.LSAF$LSAF, FPExt = X.FPExt$FPExt,
+#                        NAA = X.NAA$NAA, HFsigma = X.HFsigma$sigma.hfb, LFsigma = X.LFsigma$sigma.lfb,
+#                        X.Zdays)
+#}
 
-met.out.y <- mapply(x = flow.list, y = seas.list, z = names(seas.list), FUN = function(x, y, z) DFFTyr(x, y, z))
+#met.out.y <- mapply(x = flow.list, y = seas.list, z = names(seas.list), FUN = function(x, y, z) DFFTyr(x, y, z))
 
 #met.out.y.df <- met.out.y %>%
 #  as_tibble(., rownames = "metric") %>%
@@ -160,10 +168,10 @@ met.out.y <- mapply(x = flow.list, y = seas.list, z = names(seas.list), FUN = fu
 
 ## Try single site...need to get year as a column
 ## This works
-ss.flow <- flow.list[["07103700"]]
-ss.seas <- seas.list[["07103700"]]
+#ss.flow <- flow.list[["07103700"]]
+#ss.seas <- seas.list[["07103700"]]
 
-ss.metrics <- DFFTyr(ss.flow, ss.seas, "07103700")
+#ss.metrics <- DFFTyr(ss.flow, ss.seas, "07103700")
 
 ## filter to pre-fire & filter to post-fire
 # Note change years(x) if revising pre-/post-fire window
@@ -172,8 +180,8 @@ t.sites.pp <- t.sites %>% mutate(before.fire = igDate - years(3)) %>%
                           mutate(ybeffire = format(as.Date(before.fire, format = "%Y-%m-%d"), "%Y")) %>%
                           mutate(yaftfire = format(as.Date(after.fire, format = "%Y-%m-%d"), "%Y"))
 
-names(ss.metrics)[names(ss.metrics) == 'Site'] <- 'usgs_site'
-ss.metrics.f <- left_join(ss.metrics, t.sites.pp, by = "usgs_site") 
+#names(ss.metrics)[names(ss.metrics) == 'Site'] <- 'usgs_site'
+#ss.metrics.f <- left_join(ss.metrics, t.sites.pp, by = "usgs_site") 
 
 ###########################
 ### High-flow anomalies ###
@@ -207,6 +215,7 @@ dates.df <- bind_rows(dates, .id = "usgs_site")
 
 pos.anom <- left_join(dates.df, pre.sum.df)
 pos.anom <- left_join(pos.anom, post.sum.df)
+pos.anom <- pos.anom %>% mutate(panomdiff = bpos - apos)
 
 ### Plots ###
 hiflow.pl <- pos.anom %>% pivot_longer(cols = c("bpos", "apos"), names_to = "fire", values_to = "HSAM") %>%
@@ -232,3 +241,107 @@ ggsave(hiflow.pl, path = here("hydro", "plots"), file = "demoHSAM.pdf", width = 
 ###*number days with positive anomalies post-fire
 ###*Average time between positive anomalies above some threshold
 
+#####################################
+### Post-fire peaks in hydrograph ###
+#####################################
+# Using cardidates
+
+## Test on single river
+# 3 y post-fire
+exa <- t.dat.all %>% filter(site_no == "07103700") %>%
+                     filter(Date > igDate & Date <= igDate + years(3))
+
+exb <- t.dat.all %>% filter(site_no == "09367580") %>%
+  filter(Date > igDate & Date <= igDate + years(3))
+
+exc <- t.dat.all %>% filter(site_no == "08354900") %>%
+  filter(Date > igDate & Date <= igDate + years(3))
+
+exd <- t.dat.all %>% filter(site_no == "07109500") %>%
+  filter(Date > igDate & Date <= igDate + years(3))
+
+ggplot(exa, aes(x = Date, y = Flow)) +
+  geom_line() +
+  geom_point(
+    aes(as.Date(x), y),
+    cardidates::peakwindow(exa$Date, exa$Flow, mincut = 0.6)$peaks,
+    color = 'red'
+  ) +
+  theme_bw()
+
+ggplot(exb, aes(x = Date, y = Flow)) +
+  geom_line() +
+  geom_point(
+    aes(as.Date(x), y),
+    cardidates::peakwindow(exb$Date, exb$Flow, mincut = 0.6)$peaks,
+    color = 'red'
+  ) +
+  theme_bw()
+
+ggplot(exc, aes(x = Date, y = Flow)) +
+  geom_line() +
+  geom_point(
+    aes(as.Date(x), y),
+    cardidates::peakwindow(exc$Date, exc$Flow, mincut = 0.6)$peaks,
+    color = 'red'
+  ) +
+  theme_bw()
+
+ggplot(exd, aes(x = Date, y = Flow)) +
+  geom_line() +
+  geom_point(
+    aes(as.Date(x), y),
+    cardidates::peakwindow(exd$Date, exd$Flow, mincut = 0.6)$peaks,
+    color = 'red'
+  ) +
+  theme_bw()
+
+## Count number of post-fire peaks and export
+npeak <- t.dat.all %>% group_by(site_no) %>%
+                       filter(Date > igDate & Date <= igDate + years(3)) %>%
+                       peakwindow(Date, Flow, mincut = 0.6)$peaks
+
+
+testnpeak <- t.dat.all %>% filter(site_no == "07109500") %>%
+                           filter(Date > igDate & Date <= igDate + years(3))
+
+test <- max(peakwindow(testnpeak$Date, testnpeak$Flow, mincut = 0.6)$peakid)
+
+
+npeak <- t.dat.all %>% group_by(site_no) %>%
+                       filter(Date > igDate & Date <= igDate + years(3)) %>%
+                       mutate(npeaks = max(peakwindow(Date, Flow, mincut = 0.6)$peakid)) 
+                      
+#############################
+### Stitch output by site ###
+#############################
+## seas.fourier output: met.out.y OR ss.metrics.f
+## pre & post-fire anomalies: pos.anom
+## number post-fire peaks: npeak
+
+npeak.out <- npeak %>% select(c("site_no", "npeaks")) %>%
+                       distinct(site_no, .keep_all = TRUE) %>%
+                       mutate(metric = "npeaks") %>%
+                       rename(site = "site_no") %>%
+                       rename(value = "npeaks")
+
+panom.out <- pos.anom %>% select(c("usgs_site", "bpos", "apos", "panomdiff")) %>%
+                          pivot_longer(cols = c("bpos", "apos", "panomdiff"), names_to = "metric", values_to = "value") %>%
+                          rename(site = "usgs_site")
+
+hydromets <- bind_rows(met.out.df, npeak.out, panom.out)
+  
+write.csv(hydromets, here("hydro", "hydrocov.csv"), row.names = FALSE)
+
+## plot to check
+# all metrics
+hydromets %>% ggplot(aes(x = site, y = value)) +
+                  geom_point() +
+                  facet_wrap(~metric, scales = "free_y")
+
+pairs(~HSAM + LSAM + HSAF + LSAF + FPExt + NAA + HFsigma + LFsigma + rms.signal + snr + npeaks + bpos + apos + panomdiff, data = hydrometsW)
+pairs(~rms.signal + snr + npeaks + bpos + apos + panomdiff, data = hydrometsW)
+
+# correlations
+# to wide
+hydrometsW <- hydromets %>% pivot_wider(values_from = value, names_from = metric)
